@@ -1,0 +1,223 @@
+type BusData: [bool; 8];
+
+enum Register (
+    R0: "__",
+    R1: "_@",
+    R2: "@_",
+    R3: "@@",
+);
+
+enum BusInputSelector (
+    Reg(Register),
+    Din,
+    G,
+    Dontcare
+);
+
+logic Bus(
+    i0: BusData, 
+    i1: BusData, 
+    i2: BusData, 
+    i3: BusData, 
+    i4: BusData, 
+    i5: BusData, 
+    selector: BusInputSelector,
+) -> BusData {
+    match (i_selector) {
+        BusInputSelector::Reg(register) => match(register) {
+            R0 => r1,
+            R1 => r2,
+            R2 => r3,
+            R3 => r4,
+        }
+        BusInputSelector::din => i4,
+        BusInputSelector::g   => i5,
+        Dontcare              => "????????",
+    }
+}
+
+logic Alu(
+    mode: bool,
+    i_a: BusData,
+    i_b: BusData,
+) -> BusData {
+    if mode {
+        // 無名 logic
+        // 無名 logic は out 一つのみ
+        i_a - i_b
+
+    } else {
+        i_a + i_b
+    }
+}
+
+enum Status (T0, T1, T2, T3);
+
+lenum Instruction (
+    Mv : "____" (
+        rx: Register,
+        ry: Register,
+    ),
+    Mvi: "___@" (
+        rx: Register
+    ) "??",
+    Add: "__@_" (
+        rx: Register,
+        ry: Register,
+    ),
+    Sub: "__@@" (
+        rx: Register,
+        ry: Register,
+    ),
+);
+
+logic Signal(
+    status: Status,
+    instruction: Instruction,
+) -> (
+    // struct Signal::Out として扱われる
+    bus_selector: BusInputSelector,
+    r0_in: bool,
+    r1_in: bool,
+    r2_in: bool,
+    r3_in: bool,
+    g_in : bool,
+    a_in : bool,
+    ir_in: bool,
+    mode : bool,
+    done : bool,
+) {
+    enum RegisterInControl(
+        Reg(Register),
+        No,
+    );
+
+    wire register_in_control: RegisterInControl;
+
+    (r0_in, r1_in, r2_in, r3_in) = match(register_in_control) {
+        Reg(register) => match (register) {
+            R0 => (@, _, _, _),
+            R1 => (_, @, _, _),
+            R2 => (_, _, @, _),
+            R3 => (_, _, _, @),
+        },
+        No => (_, _, _, _)
+    }
+
+    (bus_selector, register_in_control, g_in, a_in, ir_in, mode, done) = match (instruction) {
+        Mv(rx: rx, ry: ry) => match(status) {
+            T0 => (BusInputSelector::Dontcare, RegisterInControl::No     , _, _, @, _, _),
+            T1 => (BusInputSelector::Reg(ry) , RegisterInControl::Reg(rx), _, _, _, _, @),
+            ?  => ?,
+        },
+
+        Mvi(rx: rx) => match(status) {
+            T0 => (BusInputSelector::Dontcare, RegisterInControl::No     , _, _, @, _, _),
+            T1 => (BusInputSelector::Din     , RegisterInControl::Reg(rx), _, _, _, _, @),
+            ?  => ?,
+        },
+
+        Add(rx: rx, ry: ry) => match(status) {
+            T0 => (BusInputSelector::Dontcare, RegisterInControl::No     , _, _, @, _, _),
+            T1 => (BusInputSelector::Reg(rx) , RegisterInControl::No     , _, @, _, _, _),
+            T2 => (BusInputSelector::Reg(ry) , RegisterInControl::No     , @, _, _, _, _),
+            T3 => (BusInputSelector::G       , RegisterInControl::Reg(rx), _, _, _, _, @),
+        },
+
+        Sub(rx: rx, ry: ry) => match(status) {
+            T0 => (BusInputSelector::Dontcare, RegisterInControl::No     , _, _, @, _, _),
+            T1 => (BusInputSelector::Reg(rx) , RegisterInControl::No     , _, @, _, _, _),
+            T2 => (BusInputSelector::Reg(ry) , RegisterInControl::No     , @, _, _, @, _),
+            T3 => (BusInputSelector::G       , RegisterInControl::Reg(rx), _, _, _, _, @),
+        },
+    };
+}
+
+logic ControlUnit(
+    instruction: Instruction,
+    run: bool,
+) -> (
+    bus_selector: BusInputSelector,
+    r0_in: bool,
+    r1_in: bool,
+    r2_in: bool,
+    r3_in: bool,
+    g_in : bool,
+    a_in : bool,
+    ir_in: bool,
+    mode : bool,
+    done : bool,
+) {
+    reg status: Status = match (Status) {
+        T0 => if (Run) { T1 } else { T0 },
+        T1 => if (Done) { T0 } else { T2 },
+        T2 => if (Done) { T0 } else { T3 },
+        T3 => if (Done) { T0 } else { T3 },
+    }
+
+    Signal::Out(
+        bus_selector: bus_selector,
+        r0_in: r0_in,
+        r1_in: r1_in,
+        r2_in: r2_in,
+        r3_in: r3_in,
+        g_in : g_in,
+        a_in : a_in,
+        ir_in: ir_in,
+        mode : mode,
+        done : done,
+    ) = Signal(
+        status: status,
+        instruction: instruction
+    );
+}
+
+logic RegWithEnable(
+    in: BusData;
+    enable: boolean;
+) -> BusData {
+    reg r: BusData = if enable {
+        in
+    } else {
+        r
+    }
+}
+
+logic Main(
+    run: bool,
+    din: BusData
+) -> (
+    done: bool,
+) {
+    wire ControlUnit::Out(
+        bus_selector: BusInputSelector,
+        r0_in: bool,
+        r1_in: bool,
+        r2_in: bool,
+        r3_in: bool,
+        g_in : bool,
+        a_in : bool,
+        ir_in: bool,
+        mode : bool,
+        done : bool,
+    ) = ControlUnit(
+        instruction: 
+        run: run,
+    );
+
+    wire alu = Alu(mode: mode, i_a: a, i_b: bus)
+
+    wire g  = RegWithEnable(in: alu, enable: g_in);
+    wire a  = RegWithEnable(in: bus, enable: a_in);
+    wire ir = RegWithEnable(in: din as Instruction, enable: ir_in);
+
+    wire bus = Bus(
+        i0: RegWithEnable(in: bus, enable: r0_in),
+        i1: RegWithEnable(in: bus, enable: r1_in),
+        i2: RegWithEnable(in: bus, enable: r2_in),
+        i3: RegWithEnable(in: bus, enable: r3_in),
+        i4: din,
+        i5: g,
+        selector: bus_selector,
+    );
+}
