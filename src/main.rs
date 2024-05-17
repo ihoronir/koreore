@@ -1,33 +1,14 @@
+use crate::cursor::{cursor, Cursor};
 use anyhow::Result;
-use std::{
-    fs::File,
-    io::{BufRead, BufReader},
-};
+use std::{fs::File, io::BufReader};
 
-#[derive(Debug)]
+mod cursor;
+
+#[derive(Clone, Copy, Debug)]
 struct Char {
     line_num: usize,
     row_num: usize,
     c: char,
-}
-
-fn chars_iter<T: BufRead>(source: T) -> Result<Peekable<impl Iterator<Item = Char>>> {
-    let lines = source.lines().collect::<Result<Vec<_>, _>>()?;
-
-    Ok(lines
-        .into_iter()
-        .enumerate()
-        .flat_map(|(i, string)| {
-            let mut line_vec: Vec<_> = string.chars().collect();
-            line_vec.push('\n');
-
-            line_vec.into_iter().enumerate().map(move |(j, c)| Char {
-                line_num: i + 1,
-                row_num: j + 1,
-                c,
-            })
-        })
-        .peekable())
 }
 
 struct Token {
@@ -129,30 +110,12 @@ enum TokenKind {
     Percent,
 }
 
-use std::iter::Peekable;
-
-fn consume(cur: &mut Peekable<impl Iterator<Item = Char>>, c: char) -> Option<bool> {
-    Some(cur.next_if(|char| char.c == c)?.c == c)
-}
-
-fn skip(cur: &mut Peekable<impl Iterator<Item = Char>>, mut predicate: impl FnMut(char) -> bool) {
-    while {
-        if let Some(char) = cur.peek() {
-            predicate(char.c)
-        } else {
-            false
-        }
-    } {
-        cur.next();
-    }
-}
-
-fn scan(cur: &mut Peekable<impl Iterator<Item = Char>>) -> Option<Token> {
+fn scan(cur: &mut Cursor<impl Iterator<Item = Char>>) -> Option<Token> {
     let char = cur.next()?;
 
     let token_kind = match char.c {
         '\t' | '\n' | '\r' | ' ' => {
-            skip(cur, |c| matches!(c, '\t' | '\n' | '\r' | ' '));
+            cur.skip(|c| matches!(c, '\t' | '\n' | '\r' | ' '));
             TokenKind::Whitespace
         }
         ';' => TokenKind::Semi,
@@ -180,8 +143,8 @@ fn scan(cur: &mut Peekable<impl Iterator<Item = Char>>) -> Option<Token> {
         '+' => TokenKind::Plus,
         '*' => TokenKind::Star,
         '/' => {
-            if consume(cur, '/')? {
-                skip(cur, |c| c != '\n');
+            if cur.consume('/') {
+                cur.skip(|c| c != '\n');
                 TokenKind::Comment
             } else {
                 TokenKind::Slash
@@ -191,65 +154,12 @@ fn scan(cur: &mut Peekable<impl Iterator<Item = Char>>) -> Option<Token> {
         '%' => TokenKind::Percent,
 
         _ => {
-            // Ident or Reserved
             if char.c.is_ascii_alphabetic() {
-                let mut word = char.c.to_string();
-
-                skip(cur, |c| {
-                    if c.is_ascii_alphanumeric() || c == '_' {
-                        word.push(c);
-                        true
-                    } else {
-                        false
-                    }
-                });
-
-                if let Some(reserved_kind) = detect_reserved(&word) {
-                    TokenKind::Reserved(reserved_kind)
-                } else {
-                    TokenKind::Ident(word)
-                }
-            } else
-            // Number
-            if char.c.is_ascii_digit() {
-                let mut digits = char.c.to_string();
-
-                skip(cur, |c| {
-                    if c.is_ascii_digit() {
-                        digits.push(c);
-                        true
-                    } else {
-                        false
-                    }
-                });
-
-                TokenKind::Number(digits.parse().unwrap())
-            } else
-            // Literal
-            if char.c == '"' {
-                let mut bits = String::new();
-                let mut bitwidth = 0;
-
-                skip(cur, |c| match c {
-                    '_' => {
-                        bits.push('0');
-                        bitwidth += 1;
-                        true
-                    }
-                    '@' => {
-                        bits.push('1');
-                        bitwidth += 1;
-                        true
-                    }
-                    '?' => unimplemented!(),
-                    '"' => true,
-                    _ => false,
-                });
-
-                TokenKind::Literal {
-                    bitwidth,
-                    value: u32::from_str_radix(&bits, 2).unwrap(),
-                }
+                scan_ident_or_reserved(cur, char)
+            } else if char.c.is_ascii_digit() {
+                scan_number(cur, char)
+            } else if char.c == '"' {
+                scan_literal(cur)
             } else {
                 unimplemented!()
             }
@@ -263,11 +173,71 @@ fn scan(cur: &mut Peekable<impl Iterator<Item = Char>>) -> Option<Token> {
     })
 }
 
+fn scan_ident_or_reserved(cur: &mut Cursor<impl Iterator<Item = Char>>, first: Char) -> TokenKind {
+    let mut word = first.c.to_string();
+
+    cur.skip(|c| {
+        if c.is_ascii_alphanumeric() || c == '_' {
+            word.push(c);
+            true
+        } else {
+            false
+        }
+    });
+
+    if let Some(reserved_kind) = detect_reserved(&word) {
+        TokenKind::Reserved(reserved_kind)
+    } else {
+        TokenKind::Ident(word)
+    }
+}
+
+fn scan_number(cur: &mut Cursor<impl Iterator<Item = Char>>, first: Char) -> TokenKind {
+    let mut digits = first.c.to_string();
+
+    cur.skip(|c| {
+        if c.is_ascii_digit() {
+            digits.push(c);
+            true
+        } else {
+            false
+        }
+    });
+
+    TokenKind::Number(digits.parse().unwrap())
+}
+
+fn scan_literal(cur: &mut Cursor<impl Iterator<Item = Char>>) -> TokenKind {
+    let mut bits = String::new();
+    let mut bitwidth = 0;
+
+    cur.skip(|c| match c {
+        '_' => {
+            bits.push('0');
+            bitwidth += 1;
+            true
+        }
+        '@' => {
+            bits.push('1');
+            bitwidth += 1;
+            true
+        }
+        '?' => unimplemented!(),
+        '"' => true,
+        _ => false,
+    });
+
+    TokenKind::Literal {
+        bitwidth,
+        value: u32::from_str_radix(&bits, 2).unwrap(),
+    }
+}
+
 fn tokenize() -> Result<()> {
     let file = File::open("computer.kror")?;
     let buf_reader = BufReader::new(file);
 
-    let mut cur = chars_iter(buf_reader)?;
+    let mut cur = cursor(buf_reader)?;
 
     while let Some(token) = scan(&mut cur) {
         println!("{:?}", (token.line_num, token.row_num, token.token_kind));

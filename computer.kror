@@ -1,5 +1,6 @@
 type BusData: [bool; 8];
 
+// コメント
 enum Register (
     R0: "__",
     R1: "_@",
