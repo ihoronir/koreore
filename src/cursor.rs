@@ -1,15 +1,15 @@
 use crate::Char;
-use anyhow::Result;
-use std::{io::BufRead, iter::Peekable};
+use std::iter::Peekable;
 
 pub struct Cursor<T: Iterator<Item = Char>> {
     iter: Peekable<T>,
 }
 
-pub fn cursor(source: impl BufRead) -> Result<Cursor<impl Iterator<Item = Char>>> {
-    let lines = source.lines().collect::<Result<Vec<_>, _>>()?;
-
-    let iter = lines
+pub fn cursor(source: String) -> Cursor<impl Iterator<Item = Char>> {
+    let iter = source
+        .lines()
+        .map(|line| line.to_owned())
+        .collect::<Vec<_>>()
         .into_iter()
         .enumerate()
         .flat_map(|(i, string)| {
@@ -24,7 +24,7 @@ pub fn cursor(source: impl BufRead) -> Result<Cursor<impl Iterator<Item = Char>>
         })
         .peekable();
 
-    Ok(Cursor { iter })
+    Cursor { iter }
 }
 
 impl<T: Iterator<Item = Char>> Cursor<T> {

@@ -1,6 +1,6 @@
 use crate::cursor::{cursor, Cursor};
 use anyhow::Result;
-use std::{fs::File, io::BufReader};
+use std::fs::read_to_string;
 
 mod cursor;
 
@@ -234,10 +234,7 @@ fn scan_literal(cur: &mut Cursor<impl Iterator<Item = Char>>) -> TokenKind {
 }
 
 fn tokenize() -> Result<()> {
-    let file = File::open("computer.kror")?;
-    let buf_reader = BufReader::new(file);
-
-    let mut cur = cursor(buf_reader)?;
+    let mut cur = cursor(read_to_string("computer.kror")?);
 
     while let Some(token) = scan(&mut cur) {
         println!("{:?}", (token.line_num, token.row_num, token.token_kind));
